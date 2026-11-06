@@ -1,0 +1,30 @@
+name: chess_variants
+
+services:
+  server:
+    image: ${IMAGE_PREFIX:?}-server:${IMAGE_TAG:?}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PORT: "8080"
+    expose: ["8080"]
+
+  web:
+    image: ${IMAGE_PREFIX:?}-web:${IMAGE_TAG:?}
+    restart: unless-stopped
+    depends_on: [server]
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

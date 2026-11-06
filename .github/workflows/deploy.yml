@@ -1,0 +1,140 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Redeploys an image that is already published, for example to roll back by hand.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Full commit SHA of the published images to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish image (${{ matrix.image }})
+    needs: ci
+    if: needs.ci.outputs.deployable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [server, web]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.image }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+            type=raw,value=latest
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile.${{ matrix.image }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  # Stays off until the DEPLOY_ENABLED repository variable is set to true.
+  deploy:
+    name: Deploy to VPS
+    needs: [ci, publish]
+    if: >-
+      ${{ !cancelled()
+      && vars.DEPLOY_ENABLED == 'true'
+      && github.ref == 'refs/heads/main'
+      && (needs.publish.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DOMAIN: ${{ vars.DOMAIN }}
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the image tag
+        run: |
+          if ! [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::image_tag must be a full 40-character commit SHA"
+            exit 1
+          fi
+
+      - name: Set up SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            IdentityFile ~/.ssh/deploy_key
+            BatchMode yes
+            StrictHostKeyChecking yes
+          EOF
+
+      - name: Copy deployment files
+        run: |
+          ssh vps 'mkdir -p ~/chess_variants'
+          scp deploy/compose.yaml deploy/remote-deploy.sh vps:chess_variants/
+
+      - name: Deploy
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          # shellcheck disable=SC2029
+          printf '%s' "$GHCR_TOKEN" | ssh vps \
+            "bash ~/chess_variants/remote-deploy.sh deploy '$prefix' '$IMAGE_TAG' '$DOMAIN' '$ACTOR'"
+
+      - name: Check the live site
+        id: smoke
+        run: |
+          curl --fail --silent --show-error --output /dev/null \
+            --retry 12 --retry-delay 5 --retry-all-errors --max-time 10 \
+            "https://$DOMAIN/healthz"
+          curl --fail --silent --show-error --output /dev/null --max-time 10 "https://$DOMAIN/"
+
+      - name: Roll back
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          ssh vps 'bash ~/chess_variants/remote-deploy.sh rollback'
+          echo "::error::The live site check failed, so the previous version was restored"

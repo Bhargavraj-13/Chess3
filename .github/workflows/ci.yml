@@ -1,0 +1,177 @@
+name: CI
+
+# Pushes to main run this through deploy.yml, so main is tested before it ships.
+on:
+  pull_request:
+  workflow_call:
+    outputs:
+      deployable:
+        description: Whether both the backend and the frontend exist yet
+        value: ${{ jobs.detect.outputs.deployable }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  # Jobs skip until the code they test has been added to the repo.
+  detect:
+    name: Detect project parts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.parts.outputs.backend }}
+      frontend: ${{ steps.parts.outputs.frontend }}
+      format: ${{ steps.parts.outputs.format }}
+      deployable: ${{ steps.parts.outputs.deployable }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: parts
+        run: |
+          backend=false; frontend=false; format=false; deployable=false
+          [ -f CMakeLists.txt ] && backend=true
+          [ -f frontend/package.json ] && frontend=true
+          [ -f .clang-format ] && format=true
+          [ "$backend" = true ] && [ "$frontend" = true ] && deployable=true
+          {
+            echo "backend=$backend"
+            echo "frontend=$frontend"
+            echo "format=$format"
+            echo "deployable=$deployable"
+          } >> "$GITHUB_OUTPUT"
+
+  format:
+    name: C++ formatting
+    needs: detect
+    if: needs.detect.outputs.backend == 'true' && needs.detect.outputs.format == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get update && sudo apt-get install -y clang-format
+      - run: git ls-files -z '*.cpp' '*.cc' '*.hpp' '*.h' | xargs -0 -r clang-format --dry-run --Werror
+
+  backend:
+    name: C++ (${{ matrix.name }})
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC Release
+            cc: gcc
+            cxx: g++
+            build_type: Release
+            flags: ""
+            ctest_args: ""
+          - name: Clang Release
+            cc: clang
+            cxx: clang++
+            build_type: Release
+            flags: ""
+            ctest_args: ""
+          # Perft runs only in the Release jobs because it is too slow under sanitizers.
+          - name: ASan and UBSan
+            cc: clang
+            cxx: clang++
+            build_type: Debug
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+            ctest_args: -LE perft
+          - name: TSan
+            cc: clang
+            cxx: clang++
+            build_type: RelWithDebInfo
+            flags: -fsanitize=thread -fno-omit-frame-pointer
+            ctest_args: -LE perft
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      CXXFLAGS: ${{ matrix.flags }}
+      BUILD_TYPE: ${{ matrix.build_type }}
+      CTEST_ARGS: ${{ matrix.ctest_args }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build ccache clang libboost-dev
+      - name: Allow sanitizers to start
+        if: matrix.flags != ''
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.name }}-
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: |
+          # shellcheck disable=SC2086
+          ctest --test-dir build --output-on-failure --no-tests=error --timeout 300 $CTEST_ARGS
+
+  frontend:
+    name: Frontend
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npm run typecheck --if-present
+      - run: npm test --if-present
+      - run: npm run build
+
+  images:
+    name: Container image (${{ matrix.image }})
+    needs: detect
+    if: needs.detect.outputs.deployable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, web]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/Dockerfile.${{ matrix.image }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  # Require only this check in branch protection. It covers every job above.
+  ci-passed:
+    name: CI passed
+    needs: [detect, format, backend, frontend, images]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'

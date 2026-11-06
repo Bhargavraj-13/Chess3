@@ -1,0 +1,16 @@
+# Caddy gets HTTPS certificates automatically. Access logs stay off so that
+# challenge codes and player tokens in URLs are never written to a log.
+{$DOMAIN} {
+	encode zstd gzip
+
+	@backend path /ws /ws/* /healthz
+	handle @backend {
+		reverse_proxy server:8080
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
