@@ -1,4 +1,4 @@
-# chess_variants
+# Chess3
 
 A C++ chess project built in stages. V0 is the classic game, built together by the team and playable over a network between two players. V1, V2, and V3 are variants, each built by one person on top of the shared core.
 
