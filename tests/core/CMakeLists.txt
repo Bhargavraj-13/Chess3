@@ -1,0 +1,1 @@
+chess_add_test(core_version_test version_test.cpp)
