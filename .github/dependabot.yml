@@ -14,3 +14,8 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+    # Major upgrades (new Ubuntu or Node versions) must also change the CI runners
+    # in ci.yml, so the team does them by hand instead of through Dependabot.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

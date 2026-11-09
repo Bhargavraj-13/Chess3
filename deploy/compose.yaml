@@ -1,4 +1,4 @@
-name: chess_variants
+name: chess3
 
 services:
   server:
