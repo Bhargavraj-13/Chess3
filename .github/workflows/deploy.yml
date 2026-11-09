@@ -112,8 +112,8 @@ jobs:
 
       - name: Copy deployment files
         run: |
-          ssh vps 'mkdir -p ~/chess_variants'
-          scp deploy/compose.yaml deploy/remote-deploy.sh vps:chess_variants/
+          ssh vps 'mkdir -p ~/chess3'
+          scp deploy/compose.yaml deploy/remote-deploy.sh vps:chess3/
 
       - name: Deploy
         env:
@@ -123,7 +123,7 @@ jobs:
           prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
           # shellcheck disable=SC2029
           printf '%s' "$GHCR_TOKEN" | ssh vps \
-            "bash ~/chess_variants/remote-deploy.sh deploy '$prefix' '$IMAGE_TAG' '$DOMAIN' '$ACTOR'"
+            "bash ~/chess3/remote-deploy.sh deploy '$prefix' '$IMAGE_TAG' '$DOMAIN' '$ACTOR'"
 
       - name: Check the live site
         id: smoke
@@ -136,5 +136,5 @@ jobs:
       - name: Roll back
         if: failure() && steps.smoke.outcome == 'failure'
         run: |
-          ssh vps 'bash ~/chess_variants/remote-deploy.sh rollback'
+          ssh vps 'bash ~/chess3/remote-deploy.sh rollback'
           echo "::error::The live site check failed, so the previous version was restored"
