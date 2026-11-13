@@ -11,8 +11,9 @@ namespace chess::server {
 
 // This acceptor constructor opens the socket, binds it to the endpoint, and
 // starts listening, all in one step.
-Listener::Listener(boost::asio::io_context& io, const boost::asio::ip::tcp::endpoint& endpoint)
-    : acceptor_(io, endpoint) {}
+Listener::Listener(boost::asio::io_context& io, const boost::asio::ip::tcp::endpoint& endpoint,
+                   MessageHandler& handler)
+    : acceptor_(io, endpoint), handler_(handler) {}
 
 void Listener::start() { accept_next(); }
 
@@ -31,7 +32,7 @@ void Listener::on_accept(boost::system::error_code error, boost::asio::ip::tcp::
     if (error) {
         std::cerr << "accept failed: " << error.message() << '\n';
     } else {
-        std::make_shared<HttpSession>(std::move(socket))->start();
+        std::make_shared<HttpSession>(std::move(socket), handler_)->start();
     }
     accept_next();  // always go back to waiting for the next connection
 }

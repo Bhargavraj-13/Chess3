@@ -1,7 +1,10 @@
 #include "server/http_session.hpp"
 
+#include <boost/beast/websocket/rfc6455.hpp>
 #include <chrono>
 #include <utility>
+
+#include "server/websocket_session.hpp"
 
 namespace chess::server {
 
@@ -15,7 +18,8 @@ constexpr auto kIdleTimeout = std::chrono::seconds(30);
 
 }  // namespace
 
-HttpSession::HttpSession(boost::asio::ip::tcp::socket socket) : stream_(std::move(socket)) {}
+HttpSession::HttpSession(boost::asio::ip::tcp::socket socket, MessageHandler& handler)
+    : handler_(handler), stream_(std::move(socket)) {}
 
 void HttpSession::start() { read_request(); }
 
@@ -38,8 +42,14 @@ void HttpSession::on_read(beast::error_code error, std::size_t /*bytes_read*/) {
         return;  // timeout or broken connection: let the session be destroyed
     }
 
-    // Issue #9 step 2 goes here: if beast::websocket::is_upgrade(request_),
-    // hand the connection to a WebSocket session instead of routing it.
+    // A WebSocket starts life as an HTTP request with "Upgrade: websocket".
+    // For /ws, hand the connection over. This HttpSession then has nothing left
+    // to do, so it is destroyed once this function returns.
+    if (beast::websocket::is_upgrade(request_) && path_of(request_.target()) == "/ws") {
+        std::make_shared<WebSocketSession>(std::move(stream_), handler_)
+            ->start(std::move(request_));
+        return;
+    }
 
     response_ = handle_request(request_);
     http::async_write(stream_, response_,

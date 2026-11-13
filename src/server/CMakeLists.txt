@@ -7,7 +7,10 @@ add_library(chess_server_lib STATIC
     config.cpp
     http_routes.cpp
     http_session.cpp
+    json_impl.cpp
     listener.cpp
+    protocol.cpp
+    websocket_session.cpp
 )
 target_include_directories(chess_server_lib PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(chess_server_lib PUBLIC chess::core Boost::headers Threads::Threads)
