@@ -79,7 +79,7 @@ struct Move {
 
 class Position {                                 // board + side to move + castling + ep + clocks
  public:
-  static std::optional<Position> from_fen(std::string_view);
+  static Position from_fen(std::string_view);    // throws FenError, saying what is wrong
   std::string to_fen() const;
   // Builders that variants need:
   std::optional<Piece> at(Square) const;
