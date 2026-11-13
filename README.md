@@ -81,11 +81,37 @@ Covers board representation, FEN parsing, legal move generation (including castl
 
 ## Build
 
+### Backend
+
 ```bash
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build
 ```
+
+### Frontend
+
+The frontend is a React and TypeScript app in `frontend/`, built with Vite. It needs Node.js 24, the same version CI uses. If you use [nvm](https://github.com/nvm-sh/nvm), run `nvm install` in `frontend/` to get it.
+
+```bash
+cd frontend
+npm ci        # install the exact versions in package-lock.json
+npm run dev   # start the app at http://localhost:5173
+```
+
+The dev server reloads the page when you save a file. It forwards `/ws` and `/healthz` to the C++ server on port 8080, as Caddy does in production, so start `chess_server` with `PORT=8080` when you need it.
+
+| Command | What it does |
+|---|---|
+| `npm run lint` | Checks the code with oxlint and the formatting with Prettier. Warnings fail it |
+| `npm run typecheck` | Type-checks the app with TypeScript |
+| `npm run format` | Fixes the formatting of every file |
+| `npm run build` | Type-checks, then builds the site into `frontend/dist` |
+| `npm run preview` | Serves `frontend/dist` at http://localhost:4173 |
+
+CI runs `lint`, `typecheck` and `build` on every pull request. Run `npm run format` and `npm run lint` before you push.
+
+Use `npm install <package>` to add a dependency, and commit the updated `package-lock.json` with it.
 
 ## CI/CD
 
