@@ -1,3 +1,5 @@
 chess_add_test(core_version_test version_test.cpp)
 chess_add_test(core_types_test types_test.cpp)
 chess_add_test(core_position_test position_test.cpp)
+chess_add_test(core_move_test move_test.cpp)
+chess_add_test(core_movegen_test movegen_test.cpp)
