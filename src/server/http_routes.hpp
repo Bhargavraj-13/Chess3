@@ -1,6 +1,7 @@
 #pragma once
 
 #include <boost/beast/http.hpp>
+#include <string_view>
 
 namespace chess::server {
 
@@ -19,5 +20,8 @@ using Response = http::response<http::string_body>;
 // The WebSocket endpoint /ws is not handled here. A WebSocket starts as an
 // HTTP "upgrade" request, and HttpSession will hand those over before routing.
 Response handle_request(const Request& request);
+
+// The path part of a request target: "/healthz?probe=1" -> "/healthz".
+std::string_view path_of(std::string_view target);
 
 }  // namespace chess::server

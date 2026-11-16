@@ -18,10 +18,9 @@ Response text_response(const Request& request, http::status status, std::string 
     return response;
 }
 
-// "/healthz?probe=1" -> "/healthz"
-std::string_view path_of(std::string_view target) { return target.substr(0, target.find('?')); }
-
 }  // namespace
+
+std::string_view path_of(std::string_view target) { return target.substr(0, target.find('?')); }
 
 Response handle_request(const Request& request) {
     if (path_of(request.target()) == "/healthz") {
