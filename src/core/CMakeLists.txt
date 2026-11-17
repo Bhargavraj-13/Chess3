@@ -1,4 +1,6 @@
 add_library(chess_core STATIC
+    move.cpp
+    movegen.cpp
     position.cpp
     types.cpp
     version.cpp
